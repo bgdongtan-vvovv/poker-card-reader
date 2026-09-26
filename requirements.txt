@@ -4,3 +4,5 @@ numpy
 Pillow
 requests
 google-auth
+rapidocr
+onnxruntime

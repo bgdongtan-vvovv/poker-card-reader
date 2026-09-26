@@ -22,6 +22,7 @@ from window_capture import (
 
 DEFAULT_ROI_SIZE = (300, 150)
 PREVIEW_MAX_WIDTH = 960
+STABLE_SCANS = 2
 DEBUG_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_capture.png")
 
 # Without this, Windows hands a scaled monitor's coordinates to tkinter, win32 and the
@@ -363,6 +364,7 @@ class App:
         interval_sec = max(interval_ms, 50) / 1000.0
         last_error = None
         previous = None
+        candidate, candidate_count = None, 0
 
         while not self.stop_event.is_set():
             target, note = self._grab_target(hwnd)
@@ -375,7 +377,13 @@ class App:
             last_error = None
 
             table = self.reader.read_table(target)
-            if table != previous:
+            # Deal/flip animations show cards one at a time; only commit a state once it has
+            # held for STABLE_SCANS consecutive scans so history doesn't fill with half-dealt boards.
+            if table == candidate:
+                candidate_count += 1
+            else:
+                candidate, candidate_count = table, 1
+            if candidate_count >= STABLE_SCANS and table != previous:
                 description = _describe(table)
                 self.log_queue.put(("state", description))
                 self.log_queue.put(("log", description))
