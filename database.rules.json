@@ -4,6 +4,15 @@
     ".write": false,
     "table": {
       ".read": true
+    },
+    "control": {
+      ".read": "auth != null && auth.token.email == 'bgdongtan@gmail.com' && auth.token.email_verified == true",
+      "command": {
+        ".write": "auth != null && auth.token.email == 'bgdongtan@gmail.com' && auth.token.email_verified == true"
+      }
+    },
+    "preview": {
+      ".read": "auth != null && auth.token.email == 'bgdongtan@gmail.com' && auth.token.email_verified == true"
     }
   }
 }

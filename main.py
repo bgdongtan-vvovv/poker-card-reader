@@ -1,4 +1,5 @@
 """Real-time window capture + ROI-limited card reading (corner rank/suit) GUI."""
+import base64
 import ctypes
 import os
 import queue
@@ -20,6 +21,7 @@ from window_capture import (
 )
 
 DEFAULT_ROI_SIZE = (300, 150)
+PREVIEW_MAX_WIDTH = 960
 DEBUG_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_capture.png")
 
 # Without this, Windows hands a scaled monitor's coordinates to tkinter, win32 and the
@@ -44,12 +46,13 @@ class App:
         self.log_queue = queue.Queue()
         self.stop_event = threading.Event()
         self.worker_thread = None
+        self.running = False
         self.publisher = None
 
         self._build_ui()
+        self._init_publisher()
         self.refresh_windows()
         self._poll_log_queue()
-        self._init_publisher()
 
     def _init_publisher(self):
         if not Publisher.is_configured():
@@ -57,19 +60,101 @@ class App:
             self._log("온라인 발행 키가 없어 로컬에서만 동작합니다.")
             return
         try:
-            self.publisher = Publisher(on_error=lambda msg: self.log_queue.put(("log", msg)))
-            self._log("온라인 발행 준비 완료.")
+            self.publisher = Publisher(
+                on_error=lambda msg: self.log_queue.put(("log", msg)),
+                on_command=lambda cmd: self.log_queue.put(("command", cmd)),
+            )
+            self._log("온라인 발행/원격 조작 준비 완료.")
         except Exception as exc:  # noqa: BLE001 — bad/missing key shouldn't stop local use
             self.publish_var.set(False)
             self._log(f"온라인 발행을 시작할 수 없습니다: {exc}")
+
+    # ---- remote control (commands arrive from the web page via the publisher) ----
+
+    def _handle_command(self, command):
+        action = command.get("action")
+        self._log(f"원격 명령: {action}")
+        if action == "refresh_windows":
+            self.refresh_windows()
+        elif action == "select":
+            self._select_hwnd(command.get("hwnd"))
+        elif action == "preview":
+            self._send_preview()
+        elif action == "set_roi":
+            self._set_roi_from_frame(command.get("roi") or {})
+        elif action == "clear_roi" and self.roi_enabled:
+            self.toggle_roi()
+        elif action == "start" and not self.running:
+            self.start()
+        elif action == "stop" and self.running:
+            self.stop()
+        self._publish_status()
+
+    def _select_hwnd(self, hwnd):
+        for i, (h, _) in enumerate(self.windows):
+            if h == hwnd:
+                self.window_listbox.selection_clear(0, tk.END)
+                self.window_listbox.selection_set(i)
+                self.window_listbox.see(i)
+                return
+        self._log("선택한 창을 찾을 수 없습니다. 창 목록을 새로고침하세요.")
+
+    def _send_preview(self):
+        hwnd, _ = self._selected_hwnd()
+        if hwnd is None or not self.publisher:
+            self._log("미리보기: 먼저 창을 선택하세요.")
+            return
+        frame = capture_window(hwnd)
+        if frame is None:
+            self._log("미리보기: 창을 캡처할 수 없습니다.")
+            return
+        height, width = frame.shape[:2]
+        scale = min(1.0, PREVIEW_MAX_WIDTH / width)
+        small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if ok:
+            self.publisher.publish_preview(base64.b64encode(jpeg.tobytes()).decode(), width, height)
+
+    def _set_roi_from_frame(self, roi):
+        """ROI from the page is in captured-frame pixels; place the green box over the same
+        spot on screen so the local overlay, the fields and the crop all agree."""
+        hwnd, _ = self._selected_hwnd()
+        try:
+            x, y, w, h = (int(roi[k]) for k in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError):
+            self._log("ROI 값이 올바르지 않습니다.")
+            return
+        if hwnd is None:
+            self._log("ROI: 먼저 창을 선택하세요.")
+            return
+        ox, oy = get_client_origin_screen(hwnd)
+        if self.roi_overlay is None:
+            self.roi_overlay = RoiOverlay(self.root, (ox + x, oy + y, w, h), on_change=self._set_roi_fields)
+        self.roi_overlay.set_rect(ox + x, oy + y, w, h)
+        self._set_roi_fields(ox + x, oy + y, w, h)
+        self.roi_enabled = True
+        self.roi_overlay.show()
+        self.roi_toggle_button.config(text="ROI 숨기기")
+
+    def _publish_status(self):
+        if not self.publisher:
+            return
+        hwnd, title = self._selected_hwnd()
+        roi = None
+        if hwnd is not None and self.roi_enabled and self.roi_overlay is not None:
+            rx, ry, rw, rh = self.roi_overlay.get_rect()
+            ox, oy = get_client_origin_screen(hwnd)
+            roi = {"x": rx - ox, "y": ry - oy, "w": rw, "h": rh}
+        self.publisher.publish_status({"running": self.running, "hwnd": hwnd, "title": title, "roi": roi})
 
     def _build_ui(self):
         top = ttk.Frame(self.root, padding=8)
         top.pack(fill=tk.BOTH, expand=False)
 
         ttk.Label(top, text="감시할 창 선택").pack(anchor=tk.W)
-        self.window_listbox = tk.Listbox(top, height=8)
+        self.window_listbox = tk.Listbox(top, height=8, exportselection=False)
         self.window_listbox.pack(fill=tk.X, pady=4)
+        self.window_listbox.bind("<<ListboxSelect>>", lambda _e: self._publish_status())
 
         ttk.Button(top, text="창 목록 새로고침", command=self.refresh_windows).pack(anchor=tk.W)
 
@@ -122,10 +207,13 @@ class App:
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
     def refresh_windows(self):
-        self.windows = list_windows()
+        self.windows = [(h, t) for h, t in list_windows() if t != self.root.title()]
         self.window_listbox.delete(0, tk.END)
         for _, title in self.windows:
             self.window_listbox.insert(tk.END, title)
+        if self.publisher:
+            self.publisher.publish_windows(self.windows)
+            self._publish_status()
 
     def _selected_hwnd(self):
         selection = self.window_listbox.curselection()
@@ -139,6 +227,7 @@ class App:
             if self.roi_overlay:
                 self.roi_overlay.hide()
             self.roi_toggle_button.config(text="ROI 표시")
+            self._publish_status()
             return
 
         hwnd, _ = self._selected_hwnd()
@@ -158,6 +247,7 @@ class App:
         self.roi_enabled = True
         self.roi_overlay.show()
         self.roi_toggle_button.config(text="ROI 숨기기")
+        self._publish_status()
 
     def _set_roi_fields(self, x, y, w, h):
         self.roi_x_var.set(str(int(x)))
@@ -191,6 +281,8 @@ class App:
                     self._log(payload)
                 elif kind == "state":
                     self.current_cards_var.set(payload if payload else "(없음)")
+                elif kind == "command":
+                    self._handle_command(payload)
         except queue.Empty:
             pass
         self.root.after(100, self._poll_log_queue)
@@ -228,6 +320,8 @@ class App:
         self.worker_thread = threading.Thread(target=self._capture_loop, args=(hwnd, interval_ms), daemon=True)
         self.worker_thread.start()
 
+        self.running = True
+        self._publish_status()
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         roi_note = "ROI 적용" if self.roi_enabled else "창 전체"
@@ -235,6 +329,8 @@ class App:
 
     def stop(self):
         self.stop_event.set()
+        self.running = False
+        self._publish_status()
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self._log("감시를 정지했습니다.")

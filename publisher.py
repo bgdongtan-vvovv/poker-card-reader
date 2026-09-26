@@ -24,9 +24,14 @@ HISTORY_LIMIT = 50
 HEARTBEAT_SEC = 5
 
 
+COMMAND_POLL_SEC = 1
+
+
 class Publisher:
-    def __init__(self, on_error=None):
+    def __init__(self, on_error=None, on_command=None):
         self.on_error = on_error
+        self.on_command = on_command
+        self._last_command_id = None
         self._credentials = service_account.Credentials.from_service_account_file(KEY_PATH, scopes=SCOPES)
         self._session = requests.Session()
         self._history = OrderedDict()
@@ -42,6 +47,20 @@ class Publisher:
     def publish(self, table, source):
         """Queue a state change; it becomes the current state and a history entry."""
         self._queue.put(("state", table, source, int(time.time() * 1000)))
+
+    def publish_windows(self, windows):
+        """[(hwnd, title)] → /control/windows, so the page can offer a window picker."""
+        self._queue.put(("put", "control/windows", [{"hwnd": h, "title": t} for h, t in windows]))
+
+    def publish_status(self, status):
+        self._queue.put(("put", "control/status", {**status, "at": int(time.time() * 1000)}))
+
+    def publish_preview(self, jpeg_b64, width, height):
+        """Downscaled JPEG of the selected window; width/height are the full frame size
+        so the page can map a dragged ROI back to real frame pixels."""
+        self._queue.put(("put", "preview", {
+            "image": jpeg_b64, "width": width, "height": height, "at": int(time.time() * 1000),
+        }))
 
     def close(self):
         self._stop.set()
@@ -70,27 +89,44 @@ class Publisher:
         except Exception as exc:  # noqa: BLE001 — network/auth errors surface in the GUI log
             self._report(exc)
 
-        last_beat = 0.0
+        try:
+            # A command left over from an earlier session must not fire on startup.
+            self._last_command_id = (self._request("GET", "control/command") or {}).get("id")
+        except Exception as exc:  # noqa: BLE001
+            self._report(exc)
+
+        last_beat = last_poll = 0.0
         while not self._stop.is_set():
             try:
-                item = self._queue.get(timeout=1)
+                item = self._queue.get(timeout=0.2)
             except queue.Empty:
                 item = None
             try:
-                if item is not None:
+                if item is not None and item[0] == "state":
                     self._write_state(*item[1:])
+                elif item is not None:
+                    self._request("PUT", item[1], item[2])
                 if time.time() - last_beat >= HEARTBEAT_SEC:
                     self._request("PUT", "table/heartbeat", int(time.time() * 1000))
                     last_beat = time.time()
+                if self.on_command and time.time() - last_poll >= COMMAND_POLL_SEC:
+                    last_poll = time.time()
+                    self._poll_command()
             except Exception as exc:  # noqa: BLE001
                 self._report(exc)
+
+    def _poll_command(self):
+        command = self._request("GET", "control/command")
+        if command and command.get("id") != self._last_command_id:
+            self._last_command_id = command.get("id")
+            self.on_command(command)
 
     def _write_state(self, table, source, timestamp):
         entry = {**table, "at": timestamp}
         self._history[str(timestamp)] = entry
         while len(self._history) > HISTORY_LIMIT:
             self._history.popitem(last=False)
-        self._request("PUT", "table", {
+        self._request("PATCH", "table", {
             "state": {**table, "updatedAt": timestamp, "source": source},
             "history": dict(self._history),
             "heartbeat": timestamp,
