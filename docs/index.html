@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>카드 인식 라이브</title>
+<style>
+  :root {
+    --bg: #f4f5f2; --panel: #ffffff; --text: #1d2320; --muted: #6b736f; --line: #e2e5e0;
+    --felt: #1f6b45; --card: #ffffff; --card-line: #d8dbd6; --red: #d42a2a; --black: #1a1a1a;
+    --ok: #1f9d55; --warn: #c27c0e; --off: #9aa19c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121614; --panel: #1b201d; --text: #e8ece9; --muted: #9aa39e; --line: #2b322e;
+      --felt: #16452f; --card: #f7f7f5; --card-line: #c9ccc7;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--off); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+  .table { background: var(--felt); border-radius: 16px; padding: 18px; color: #fff; }
+  .row + .row { margin-top: 16px; }
+  .row h2 { font-size: 13px; font-weight: 600; opacity: .8; margin: 0 0 8px; letter-spacing: .02em; }
+  .cards { display: flex; flex-wrap: wrap; gap: 8px; min-height: 76px; align-items: center; }
+  .empty { opacity: .55; font-size: 14px; }
+  .card { width: 54px; height: 76px; background: var(--card); border: 1px solid var(--card-line);
+          border-radius: 7px; display: flex; flex-direction: column; align-items: center;
+          justify-content: center; font-weight: 700; font-size: 22px; line-height: 1;
+          box-shadow: 0 2px 4px rgba(0,0,0,.25); }
+  .card .suit { font-size: 24px; margin-top: 4px; }
+  .card.red { color: var(--red); } .card.black { color: var(--black); }
+  .meta { margin-top: 12px; font-size: 12px; opacity: .75; }
+  section.history { margin-top: 20px; background: var(--panel); border: 1px solid var(--line);
+                    border-radius: 12px; padding: 14px 16px; }
+  section.history h2 { font-size: 15px; margin: 0 0 8px; }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 8px 0;
+       border-top: 1px solid var(--line); font-size: 14px; }
+  li:first-child { border-top: 0; }
+  time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .label { color: var(--muted); font-size: 12px; margin-right: 4px; }
+  .r { color: var(--red); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>카드 인식 라이브</h1>
+    <span class="status"><span class="dot" id="dot"></span><span id="status">연결 중…</span></span>
+  </header>
+
+  <div class="table">
+    <div class="row"><h2>보드</h2><div class="cards" id="board"></div></div>
+    <div class="row"><h2>내 카드</h2><div class="cards" id="hero"></div></div>
+    <div class="row" id="others-row" hidden><h2>기타 (상대 쇼다운 등)</h2><div class="cards" id="others"></div></div>
+    <div class="meta" id="updated"></div>
+  </div>
+
+  <section class="history">
+    <h2>변경 기록</h2>
+    <ol id="history"></ol>
+  </section>
+</main>
+
+<script>
+  const DB = "https://card-reader-vvovv-default-rtdb.asia-southeast1.firebasedatabase.app";
+  const RED_SUITS = new Set(["♥", "♦"]);
+  let data = {};
+
+  function setAt(path, value) {
+    const keys = path.split("/").filter(Boolean);
+    if (!keys.length) { data = value || {}; return; }
+    let node = data;
+    for (const k of keys.slice(0, -1)) { node = node[k] = (node[k] && typeof node[k] === "object") ? node[k] : {}; }
+    const last = keys[keys.length - 1];
+    if (value === null) delete node[last]; else node[last] = value;
+  }
+
+  function cardEl(label) {
+    const suit = label.slice(-1), rank = label.slice(0, -1);
+    const el = document.createElement("div");
+    el.className = "card " + (RED_SUITS.has(suit) ? "red" : "black");
+    el.innerHTML = `<span>${rank}</span><span class="suit">${suit}</span>`;
+    el.title = label;
+    return el;
+  }
+
+  function renderCards(id, list, emptyText) {
+    const box = document.getElementById(id);
+    box.replaceChildren();
+    if (!list || !list.length) {
+      const e = document.createElement("span"); e.className = "empty"; e.textContent = emptyText; box.append(e);
+      return;
+    }
+    list.forEach(l => box.append(cardEl(l)));
+  }
+
+  function fmtTime(ms) {
+    return new Date(ms).toLocaleTimeString("ko-KR", { hour12: false });
+  }
+
+  function inline(list) {
+    return (list || []).map(l => RED_SUITS.has(l.slice(-1)) ? `<span class="r">${l}</span>` : l).join(" ");
+  }
+
+  function render() {
+    const s = data.state || {};
+    renderCards("board", s.board, "아직 없음");
+    renderCards("hero", s.hero, "인식된 카드 없음");
+    document.getElementById("others-row").hidden = !(s.others && s.others.length);
+    renderCards("others", s.others, "");
+    document.getElementById("updated").textContent = s.updatedAt ? `마지막 변경 ${fmtTime(s.updatedAt)}` : "";
+
+    const hist = Object.values(data.history || {}).sort((a, b) => b.at - a.at);
+    const ol = document.getElementById("history");
+    ol.innerHTML = hist.length ? "" : "<li><time></time><span class='label'>기록 없음</span></li>";
+    for (const h of hist) {
+      const parts = [];
+      if (h.hero && h.hero.length) parts.push(`<span class="label">내 카드</span>${inline(h.hero)}`);
+      if (h.board && h.board.length) parts.push(`<span class="label">보드</span>${inline(h.board)}`);
+      if (h.others && h.others.length) parts.push(`<span class="label">기타</span>${inline(h.others)}`);
+      const li = document.createElement("li");
+      li.innerHTML = `<time>${fmtTime(h.at)}</time><span>${parts.join(" &nbsp; ") || '<span class="label">카드 없음</span>'}</span>`;
+      ol.append(li);
+    }
+    updateStatus();
+  }
+
+  function updateStatus() {
+    const beat = data.heartbeat, dot = document.getElementById("dot"), st = document.getElementById("status");
+    if (!beat) { dot.className = "dot"; st.textContent = "PC 프로그램 대기 중"; return; }
+    const age = (Date.now() - beat) / 1000;
+    if (age < 15) { dot.className = "dot ok"; st.textContent = "실시간 수신 중"; }
+    else { dot.className = "dot warn"; st.textContent = `PC 연결 끊김 (${fmtTime(beat)} 이후)`; }
+  }
+
+  const es = new EventSource(`${DB}/table.json`);
+  const onEvent = patch => e => {
+    const msg = JSON.parse(e.data);
+    if (patch) for (const [k, v] of Object.entries(msg.data || {})) setAt(`${msg.path}/${k}`, v);
+    else setAt(msg.path, msg.data);
+    render();
+  };
+  es.addEventListener("put", onEvent(false));
+  es.addEventListener("patch", onEvent(true));
+  es.onerror = () => { document.getElementById("status").textContent = "재연결 중…"; };
+  setInterval(updateStatus, 3000);
+</script>
+</body>
+</html>

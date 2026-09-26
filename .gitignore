@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+debug_capture.png
+.firebase/
+*.log
+service-account*.json

@@ -1,0 +1,6 @@
+pywin32
+opencv-python
+numpy
+Pillow
+requests
+google-auth
