@@ -23,7 +23,6 @@ RED_SUITS = {"H", "D"}
 RANKS = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"}
 MIN_OCR_SCORE = 0.5
 MIN_SUIT_SCORE = 0.7
-MIN_SUIT_MARGIN = 0.05
 
 
 def _load_suit_templates():
@@ -47,7 +46,8 @@ def _load_suit_templates():
             if n < 2:
                 continue
             i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-            templates.append((code, _suit_vector(img, tuple(int(v) for v in stats[i, :4]))))
+            box = tuple(int(v) for v in stats[i, :4])
+            templates.append((code, _suit_vector(img, box), _suit_contour(img, box)))
             found = True
         if not found:
             missing.append(name)
@@ -163,8 +163,22 @@ def _is_red_ink(img, bbox):
     return float((patch[ink][:, 2] - patch[ink][:, 1]).mean()) > 60
 
 
+def _suit_contour(img, bbox):
+    contours, _ = cv2.findContours(_dark_ink(img, bbox).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    return max(contours, key=cv2.contourArea) if contours else None
+
+
 def _suit_vector(img, bbox):
-    mask = _dark_ink(img, bbox).astype(np.uint8) * 255
+    """Shape of the suit symbol alone: keep only the largest connected ink shape in the box
+    and crop to it. Other ink that falls inside the box (the big centre pip, the edge of an
+    overlapping card) otherwise distorts the shape — it made spades match diamonds."""
+    ink = _dark_ink(img, bbox).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(ink)
+    if n < 2:
+        return _normalize(np.zeros(SUIT_SIZE[0] * SUIT_SIZE[1], np.float32))
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    x, y, w, h = (int(v) for v in stats[i, :4])
+    mask = (labels[y:y + h, x:x + w] == i).astype(np.uint8) * 255
     return _normalize(cv2.resize(mask, SUIT_SIZE, interpolation=cv2.INTER_AREA).astype(np.float32).ravel())
 
 
@@ -228,19 +242,24 @@ class CardReader:
         return _normalize_rank(result.txts[0]), float(result.scores[0])
 
     def _read_suit(self, img, box, rank_is_red):
-        """Best-matching suit template, or None (skip the card) when the match is weak or the
-        matched suit's colour disagrees with the rank's — e.g. a suit covered by a banner."""
-        vec = _suit_vector(img, box)
-        by_suit = {}
-        for label, tmpl in self.suit_templates:
-            by_suit[label] = max(by_suit.get(label, -1.0), float(vec @ tmpl))
-        if not by_suit:
+        """Match the suit against the templates two ways — pixel overlap and contour shape
+        (Hu moments) — and accept only when both pick the same suit. Spade vs club overlap
+        almost equally as blobs, but their outlines (pointed tip vs three lobes) differ.
+        Also None when the overlap is weak or the colour disagrees with the rank's (e.g. a
+        suit covered by a banner)."""
+        vec, contour = _suit_vector(img, box), _suit_contour(img, box)
+        if contour is None:
             return None
-        ranked = sorted(by_suit.items(), key=lambda kv: -kv[1])
-        best, best_score = ranked[0]
-        runner_up = ranked[1][1] if len(ranked) > 1 else -1.0
-        # Too close to call (spade vs club are similar blobs) → skip rather than guess.
-        if best_score < MIN_SUIT_SCORE or best_score - runner_up < MIN_SUIT_MARGIN:
+        overlap, outline = {}, {}
+        for label, tmpl_vec, tmpl_contour in self.suit_templates:
+            overlap[label] = max(overlap.get(label, -1.0), float(vec @ tmpl_vec))
+            if tmpl_contour is not None:
+                dist = cv2.matchShapes(contour, tmpl_contour, cv2.CONTOURS_MATCH_I1, 0)
+                outline[label] = min(outline.get(label, float("inf")), dist)
+        if not overlap or not outline:
+            return None
+        best = max(overlap, key=overlap.get)
+        if overlap[best] < MIN_SUIT_SCORE or min(outline, key=outline.get) != best:
             return None
         if (best in RED_SUITS) != rank_is_red or _is_red_ink(img, box) != rank_is_red:
             return None
