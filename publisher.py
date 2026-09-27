@@ -25,6 +25,9 @@ HEARTBEAT_SEC = 5
 
 
 COMMAND_POLL_SEC = 1
+# The page renews /control/viewer while the owner has it open; previews are only streamed
+# while that's fresh, so nobody pays preview bandwidth when the page is closed.
+VIEWER_TIMEOUT_MS = 60_000
 
 
 class Publisher:
@@ -32,6 +35,7 @@ class Publisher:
         self.on_error = on_error
         self.on_command = on_command
         self._last_command_id = None
+        self._viewer_at = 0
         self._credentials = service_account.Credentials.from_service_account_file(KEY_PATH, scopes=SCOPES)
         self._session = requests.Session()
         self._history = OrderedDict()
@@ -43,6 +47,9 @@ class Publisher:
     @staticmethod
     def is_configured():
         return os.path.exists(KEY_PATH)
+
+    def viewer_active(self):
+        return time.time() * 1000 - self._viewer_at < VIEWER_TIMEOUT_MS
 
     def publish(self, table, source):
         """Queue a state change; it becomes the current state and a history entry."""
@@ -120,6 +127,7 @@ class Publisher:
         if command and command.get("id") != self._last_command_id:
             self._last_command_id = command.get("id")
             self.on_command(command)
+        self._viewer_at = self._request("GET", "control/viewer") or 0
 
     def _write_state(self, table, source, timestamp):
         entry = {**table, "at": timestamp}

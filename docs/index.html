@@ -9,7 +9,8 @@
     --bg: #f4f5f2; --panel: #ffffff; --text: #1d2320; --muted: #6b736f; --line: #e2e5e0;
     --felt: #1f6b45; --card: #ffffff; --card-line: #d8dbd6; --red: #d42a2a; --black: #1a1a1a;
     --ok: #1f9d55; --warn: #c27c0e; --off: #9aa19c; --accent: #1f6b45; --accent-text: #ffffff;
-    --danger: #b93a32; --roi: #22e06b;
+    --danger: #b93a32;
+    --k-board: #22e06b; --k-hero: #3fa9ff; --k-player: #ffb020;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -20,7 +21,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.5 "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
-  main { max-width: 820px; margin: 0 auto; padding: 20px 16px 40px; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; }
   header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
   h1 { font-size: 20px; margin: 0; }
   .head-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -32,13 +33,21 @@
   button:hover:not(:disabled) { border-color: var(--muted); }
   button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+  button.small { min-height: 30px; padding: 3px 10px; font-size: 13px; }
   button:disabled { opacity: .45; cursor: default; }
-  select { font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
-           background: var(--panel); color: var(--text); min-height: 38px; flex: 1 1 220px; min-width: 0; }
+  select, input[type=text] { font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); min-height: 38px; min-width: 0; }
+  select { flex: 1 1 220px; }
   .table { background: var(--felt); border-radius: 16px; padding: 18px; color: #fff; }
   .row + .row { margin-top: 16px; }
-  .row h2 { font-size: 13px; font-weight: 600; opacity: .8; margin: 0 0 8px; letter-spacing: .02em; }
+  .row h2 { font-size: 13px; font-weight: 600; opacity: .85; margin: 0 0 8px; letter-spacing: .02em;
+            display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
   .cards { display: flex; flex-wrap: wrap; gap: 8px; min-height: 76px; align-items: center; }
+  .players { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .players .cards { min-height: 60px; }
+  .players .card { width: 44px; height: 62px; font-size: 18px; }
+  .players .card .suit { font-size: 19px; }
   .empty { opacity: .55; font-size: 14px; }
   .card { width: 54px; height: 76px; background: var(--card); border: 1px solid var(--card-line);
           border-radius: 7px; display: flex; flex-direction: column; align-items: center;
@@ -50,21 +59,36 @@
   section.panel { margin-top: 20px; background: var(--panel); border: 1px solid var(--line);
                   border-radius: 12px; padding: 14px 16px; }
   section.panel h2 { font-size: 15px; margin: 0 0 10px; }
+  section.panel h3 { font-size: 14px; margin: 14px 0 8px; }
   .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
   .kv { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
   .kv b { color: var(--text); font-weight: 600; }
   .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
-  .preview-wrap { position: relative; display: inline-block; max-width: 100%; margin-top: 6px;
+  .preview-wrap { position: relative; display: inline-block; max-width: 100%;
                   touch-action: none; user-select: none; border-radius: 8px; overflow: hidden; background: #000; }
   .preview-wrap img { display: block; max-width: 100%; height: auto; pointer-events: none; }
-  .roi-box { position: absolute; border: 2px solid var(--roi); box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }
-  .roi-box.current { box-shadow: none; border-style: dashed; opacity: .8; }
-  ol { list-style: none; margin: 0; padding: 0; }
-  li { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 8px 0;
+  .preview-age { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .roi-box { position: absolute; border: 2px solid; pointer-events: none; }
+  .roi-box span { position: absolute; left: -2px; top: -2px; font-size: 11px; font-weight: 700; color: #000;
+                  padding: 0 4px; line-height: 16px; white-space: nowrap; }
+  .roi-box.draft { border-style: dashed; border-color: #fff; box-shadow: 0 0 0 9999px rgba(0,0,0,.35); }
+  .kinds { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .kinds label { padding: 7px 12px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .kinds label + label { border-left: 1px solid var(--line); }
+  .kinds input { display: none; }
+  .kinds label:has(input:checked) { background: var(--accent); color: var(--accent-text); }
+  .roi-list { list-style: none; margin: 0; padding: 0; }
+  .roi-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .roi-list li:first-child { border-top: 0; }
+  .roi-list .grow { flex: 1; min-width: 0; }
+  .roi-list small { color: var(--muted); }
+  ol.history { list-style: none; margin: 0; padding: 0; }
+  ol.history li { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 8px 0;
        border-top: 1px solid var(--line); font-size: 14px; }
-  li:first-child { border-top: 0; }
+  ol.history li:first-child { border-top: 0; }
   time { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .label { color: var(--muted); font-size: 12px; margin-right: 4px; }
+  .label { color: var(--muted); font-size: 12px; margin: 0 4px 0 8px; }
+  .label:first-child { margin-left: 0; }
   .r { color: var(--red); }
   .msg { font-size: 14px; color: var(--muted); }
   [hidden] { display: none !important; }
@@ -82,9 +106,9 @@
   </header>
 
   <div class="table">
-    <div class="row"><h2>보드</h2><div class="cards" id="board"></div></div>
-    <div class="row"><h2>내 카드</h2><div class="cards" id="hero"></div></div>
-    <div class="row" id="others-row" hidden><h2>기타 (상대 쇼다운 등)</h2><div class="cards" id="others"></div></div>
+    <div class="row"><h2><span class="swatch" style="background:var(--k-board)"></span>보드</h2><div class="cards" id="board"></div></div>
+    <div class="row"><h2><span class="swatch" style="background:var(--k-hero)"></span>내 카드</h2><div class="cards" id="hero"></div></div>
+    <div class="row" id="players-row" hidden><h2><span class="swatch" style="background:var(--k-player)"></span>상대</h2><div class="players" id="players"></div></div>
     <div class="meta" id="updated"></div>
   </div>
 
@@ -97,25 +121,34 @@
       <button id="refresh">창 목록 새로고침</button>
       <button id="select">이 창 선택</button>
     </div>
-
     <div class="controls">
       <button class="primary" id="start">시작</button>
       <button class="danger" id="stop">정지</button>
-      <button id="preview-btn">미리보기 가져오기</button>
     </div>
 
+    <h3>실시간 미리보기</h3>
+    <div id="preview-empty" class="msg">PC에서 창을 선택하면 미리보기가 몇 초마다 자동으로 갱신됩니다.</div>
     <div id="preview-area" hidden>
       <div class="preview-wrap" id="preview-wrap">
         <img id="preview-img" alt="게임 화면 미리보기">
-        <div class="roi-box current" id="roi-current" hidden></div>
-        <div class="roi-box" id="roi-draft" hidden></div>
+        <div id="roi-layer"></div>
+        <div class="roi-box draft" id="roi-draft" hidden></div>
       </div>
-      <p class="hint">미리보기 위를 드래그해서 감시할 영역(ROI)을 그린 뒤 "ROI 적용"을 누르세요. 점선은 현재 적용된 영역입니다.</p>
-      <div class="controls" style="margin-top:8px">
-        <button class="primary" id="roi-apply" disabled>ROI 적용</button>
-        <button id="roi-clear">ROI 해제 (창 전체)</button>
-      </div>
+      <div class="preview-age" id="preview-age"></div>
     </div>
+
+    <h3>감시 영역 (ROI)</h3>
+    <div class="controls">
+      <span class="kinds" id="kinds">
+        <label><input type="radio" name="kind" value="board" checked><span class="swatch" style="background:var(--k-board)"></span>보드</label>
+        <label><input type="radio" name="kind" value="hero"><span class="swatch" style="background:var(--k-hero)"></span>내 카드</label>
+        <label><input type="radio" name="kind" value="player"><span class="swatch" style="background:var(--k-player)"></span>상대</label>
+      </span>
+      <input type="text" id="player-name" placeholder="상대 이름 (예: 상대 1)" maxlength="20" hidden>
+      <button class="primary" id="roi-save" disabled>영역 저장</button>
+    </div>
+    <p class="hint">종류를 고르고 미리보기 위를 드래그한 뒤 "영역 저장"을 누르세요. 보드·내 카드는 하나씩이라 다시 그리면 교체되고, 상대는 여러 개 만들 수 있습니다. 영역이 하나도 없으면 창 전체를 읽습니다.</p>
+    <ul class="roi-list" id="roi-list"></ul>
   </section>
 
   <section class="panel" id="no-access" hidden>
@@ -124,7 +157,7 @@
 
   <section class="panel">
     <h2>변경 기록</h2>
-    <ol id="history"></ol>
+    <ol class="history" id="history"></ol>
   </section>
 </main>
 
@@ -132,7 +165,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
     from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-  import { getDatabase, ref, onValue, set, off }
+  import { getDatabase, ref, onValue, set, off, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   const app = initializeApp({
@@ -146,6 +179,9 @@
   const db = getDatabase(app);
   const $ = id => document.getElementById(id);
   const RED_SUITS = new Set(["♥", "♦"]);
+  const KIND_NAMES = { board: "보드", hero: "내 카드", player: "상대" };
+  const KIND_COLORS = { board: "var(--k-board)", hero: "var(--k-hero)", player: "var(--k-player)" };
+  const roiTitle = r => r.kind === "player" ? r.name : KIND_NAMES[r.kind];
 
   // ---------- results (public) ----------
   let table = {};
@@ -160,15 +196,15 @@
     el.append(r, s); el.title = label;
     return el;
   }
-  function renderCards(id, list, emptyText) {
-    const box = $(id); box.replaceChildren();
+  function fillCards(box, list, emptyText) {
+    box.replaceChildren();
     if (!list || !list.length) {
       const e = document.createElement("span"); e.className = "empty"; e.textContent = emptyText; box.append(e); return;
     }
     list.forEach(l => box.append(cardEl(l)));
   }
   const fmtTime = ms => new Date(ms).toLocaleTimeString("ko-KR", { hour12: false });
-  function inline(list) {
+  function inlineCards(list) {
     return (list || []).map(l => {
       const span = document.createElement("span");
       if (RED_SUITS.has(l.slice(-1))) span.className = "r";
@@ -176,28 +212,35 @@
       return span;
     });
   }
+  function labelEl(text) { const s = document.createElement("span"); s.className = "label"; s.textContent = text; return s; }
+
   function renderTable() {
     const s = table.state || {};
-    renderCards("board", s.board, "아직 없음");
-    renderCards("hero", s.hero, "인식된 카드 없음");
-    $("others-row").hidden = !(s.others && s.others.length);
-    renderCards("others", s.others, "");
+    fillCards($("board"), s.board, "아직 없음");
+    fillCards($("hero"), s.hero, "인식된 카드 없음");
+    const players = Object.entries(s.players || {});
+    $("players-row").hidden = !players.length;
+    const pbox = $("players"); pbox.replaceChildren();
+    for (const [name, cards] of players) {
+      const wrap = document.createElement("div");
+      const h = document.createElement("div"); h.className = "label"; h.style.color = "#fff"; h.style.opacity = ".8"; h.textContent = name;
+      const c = document.createElement("div"); c.className = "cards"; fillCards(c, cards, "");
+      wrap.append(h, c); pbox.append(wrap);
+    }
     $("updated").textContent = s.updatedAt ? `마지막 변경 ${fmtTime(s.updatedAt)}` : "";
 
     const hist = Object.values(table.history || {}).sort((a, b) => b.at - a.at);
     const ol = $("history"); ol.replaceChildren();
-    if (!hist.length) { const li = document.createElement("li"); li.innerHTML = "<time></time><span class='label'>기록 없음</span>"; ol.append(li); }
+    if (!hist.length) { const li = document.createElement("li"); li.append(document.createElement("time"), labelEl("기록 없음")); ol.append(li); }
     for (const h of hist) {
       const li = document.createElement("li");
       const t = document.createElement("time"); t.textContent = fmtTime(h.at);
       const body = document.createElement("span");
-      for (const [key, name] of [["hero", "내 카드"], ["board", "보드"], ["others", "기타"]]) {
-        if (h[key] && h[key].length) {
-          const lab = document.createElement("span"); lab.className = "label"; lab.textContent = name;
-          body.append(lab, ...inline(h[key]));
-        }
-      }
-      if (!body.childNodes.length) { const lab = document.createElement("span"); lab.className = "label"; lab.textContent = "카드 없음"; body.append(lab); }
+      if (h.board && h.board.length) body.append(labelEl("보드"), ...inlineCards(h.board));
+      if (h.hero && h.hero.length) body.append(labelEl("내 카드"), ...inlineCards(h.hero));
+      if (h.others && h.others.length) body.append(labelEl("기타"), ...inlineCards(h.others));
+      for (const [name, cards] of Object.entries(h.players || {})) body.append(labelEl(name), ...inlineCards(cards));
+      if (!body.childNodes.length) body.append(labelEl("카드 없음"));
       li.append(t, body); ol.append(li);
     }
     updateConnection();
@@ -216,18 +259,25 @@
   $("logout").onclick = () => signOut(auth);
   function alertMsg(text) { $("no-access").hidden = false; $("no-access-msg").textContent = text; }
 
-  let controlRef = null, previewRef = null;
+  let controlRef = null, previewRef = null, isOwner = false;
   onAuthStateChanged(auth, user => {
     $("login").hidden = !!user; $("logout").hidden = !user;
     $("no-access").hidden = true;
     if (controlRef) { off(controlRef); off(previewRef); controlRef = previewRef = null; }
-    $("control").hidden = true;
+    $("control").hidden = true; isOwner = false;
     if (!user) return;
     controlRef = ref(db, "control"); previewRef = ref(db, "preview");
-    onValue(controlRef, snap => { $("control").hidden = false; renderControl(snap.val() || {}); },
+    onValue(controlRef, snap => { isOwner = true; $("control").hidden = false; renderControl(snap.val() || {}); announceViewer(); },
       () => alertMsg(`${user.email} 계정은 조작 권한이 없습니다. 결과 보기만 가능합니다.`));
     onValue(previewRef, snap => renderPreview(snap.val()), () => {});
   });
+
+  // The PC streams previews only while this is fresh (renewed while the tab is visible).
+  function announceViewer() {
+    if (isOwner && document.visibilityState === "visible") set(ref(db, "control/viewer"), serverTimestamp()).catch(() => {});
+  }
+  setInterval(announceViewer, 20000);
+  document.addEventListener("visibilitychange", announceViewer);
 
   // ---------- remote control ----------
   let control = {}, preview = null, draft = null;
@@ -238,9 +288,9 @@
   function renderControl(c) {
     control = c;
     const st = c.status || {};
-    const roi = st.roi ? `${st.roi.x},${st.roi.y} · ${st.roi.w}×${st.roi.h}` : "창 전체";
     const pc = $("pc-status"); pc.replaceChildren();
-    const parts = [["실행", st.running ? "인식 중" : "정지"], ["선택 창", st.title || "없음"], ["ROI", roi]];
+    const rois = st.rois || [];
+    const parts = [["실행", st.running ? "인식 중" : "정지"], ["선택 창", st.title || "없음"], ["영역", rois.length ? `${rois.length}개` : "없음 (창 전체)"]];
     parts.forEach(([k, v], i) => { pc.append(`${i ? " · " : ""}${k}: `); const b = document.createElement("b"); b.textContent = v; pc.append(b); });
     $("start").disabled = !!st.running || !st.hwnd; $("stop").disabled = !st.running;
 
@@ -250,23 +300,41 @@
     if (!list.length) { const o = document.createElement("option"); o.value = ""; o.textContent = "창 목록 없음"; sel.append(o); }
     for (const w of list) { const o = document.createElement("option"); o.value = w.hwnd; o.textContent = w.title; sel.append(o); }
     if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
-    drawCurrentRoi();
+
+    const ul = $("roi-list"); ul.replaceChildren();
+    for (const r of rois) {
+      const li = document.createElement("li");
+      const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = KIND_COLORS[r.kind];
+      const name = document.createElement("span"); name.className = "grow"; name.textContent = roiTitle(r) + " ";
+      const small = document.createElement("small"); small.textContent = `${r.x},${r.y} · ${r.w}×${r.h}`; name.append(small);
+      const del = document.createElement("button"); del.className = "small"; del.textContent = "삭제";
+      del.onclick = () => send("delete_roi", { id: r.id });
+      li.append(sw, name, del); ul.append(li);
+    }
+    drawRois();
   }
 
   $("refresh").onclick = () => send("refresh_windows");
   $("select").onclick = () => { const v = $("windows").value; if (v) send("select", { hwnd: Number(v) }); };
   $("start").onclick = () => send("start");
   $("stop").onclick = () => send("stop");
-  $("preview-btn").onclick = () => send("preview");
-  $("roi-clear").onclick = () => { draft = null; $("roi-draft").hidden = true; $("roi-apply").disabled = true; send("clear_roi"); };
-  $("roi-apply").onclick = () => { if (draft) send("set_roi", { roi: draft }); $("roi-apply").disabled = true; };
+
+  const currentKind = () => document.querySelector("input[name=kind]:checked").value;
+  $("kinds").addEventListener("change", () => { $("player-name").hidden = currentKind() !== "player"; });
+  $("roi-save").onclick = () => {
+    if (!draft) return;
+    const kind = currentKind();
+    send("set_roi", { roi: { ...draft, kind, name: kind === "player" ? $("player-name").value.trim() : "" } });
+    draft = null; $("roi-draft").hidden = true; $("roi-save").disabled = true; $("player-name").value = "";
+  };
 
   function renderPreview(p) {
     preview = p;
     if (!p) return;
-    $("preview-area").hidden = false;
+    $("preview-empty").hidden = true; $("preview-area").hidden = false;
     $("preview-img").src = `data:image/jpeg;base64,${p.image}`;
-    $("preview-img").onload = drawCurrentRoi;
+    $("preview-img").onload = () => { drawRois(); if (draft) placeBox($("roi-draft"), draft); };
+    $("preview-age").textContent = `미리보기 ${fmtTime(p.at)}`;
   }
   const scaleX = () => preview.width / $("preview-img").clientWidth;
   const scaleY = () => preview.height / $("preview-img").clientHeight;
@@ -274,12 +342,17 @@
     el.style.left = `${r.x / scaleX()}px`; el.style.top = `${r.y / scaleY()}px`;
     el.style.width = `${r.w / scaleX()}px`; el.style.height = `${r.h / scaleY()}px`; el.hidden = false;
   }
-  function drawCurrentRoi() {
-    const roi = control.status && control.status.roi;
-    if (!preview || !roi || !$("preview-img").clientWidth) { $("roi-current").hidden = true; return; }
-    placeBox($("roi-current"), roi);
+  function drawRois() {
+    const layer = $("roi-layer"); layer.replaceChildren();
+    const rois = (control.status && control.status.rois) || [];
+    if (!preview || !$("preview-img").clientWidth) return;
+    for (const r of rois) {
+      const box = document.createElement("div"); box.className = "roi-box"; box.style.borderColor = KIND_COLORS[r.kind];
+      const tag = document.createElement("span"); tag.style.background = KIND_COLORS[r.kind]; tag.textContent = roiTitle(r);
+      box.append(tag); placeBox(box, r); layer.append(box);
+    }
   }
-  window.addEventListener("resize", () => { drawCurrentRoi(); if (draft) placeBox($("roi-draft"), draft); });
+  window.addEventListener("resize", () => { drawRois(); if (draft) placeBox($("roi-draft"), draft); });
 
   let dragStart = null;
   const wrap = $("preview-wrap");
@@ -299,7 +372,7 @@
   wrap.addEventListener("pointerup", () => {
     dragStart = null;
     if (draft && (draft.w < 20 || draft.h < 20)) { draft = null; $("roi-draft").hidden = true; }
-    $("roi-apply").disabled = !draft;
+    $("roi-save").disabled = !draft;
   });
 </script>
 </body>

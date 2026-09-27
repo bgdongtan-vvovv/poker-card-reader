@@ -1,19 +1,20 @@
-"""A draggable, resizable green-bordered overlay window that marks a screen region (ROI).
+"""A draggable, resizable, labelled overlay window that marks a screen region (ROI).
 Everything inside the border stays click-through and visible (Windows -transparentcolor),
 so it can float over the target window without blocking it."""
 import tkinter as tk
 
 TRANSPARENT_COLOR = "magenta"
-BORDER_COLOR = "#00ff00"
 BORDER_WIDTH = 3
 HANDLE_SIZE = 14
 MIN_SIZE = 40
 
 
 class RoiOverlay:
-    def __init__(self, root, rect, on_change=None):
-        """rect: (x, y, w, h) in screen coordinates. on_change: callback(x, y, w, h)."""
-        self.on_change = on_change
+    def __init__(self, root, rect, label="", color="#00ff00", on_release=None):
+        """rect: (x, y, w, h) in screen coordinates. on_release: callback(x, y, w, h) once a
+        move/resize drag finishes."""
+        self.on_release = on_release
+        self.label, self.color = label, color
         self.x, self.y, self.w, self.h = rect
 
         self.top = tk.Toplevel(root)
@@ -57,6 +58,10 @@ class RoiOverlay:
         self._apply_geometry()
         self._redraw()
 
+    def set_label(self, label, color):
+        self.label, self.color = label, color
+        self._redraw()
+
     def _apply_geometry(self):
         self.top.geometry(f"{self.w}x{self.h}+{self.x}+{self.y}")
 
@@ -64,13 +69,19 @@ class RoiOverlay:
         self.canvas.delete("all")
         half = BORDER_WIDTH / 2
         self.canvas.create_rectangle(
-            half, half, self.w - half, self.h - half,
-            outline=BORDER_COLOR, width=BORDER_WIDTH,
+            half, half, self.w - half, self.h - half, outline=self.color, width=BORDER_WIDTH,
         )
         self.canvas.create_rectangle(
-            self.w - HANDLE_SIZE, self.h - HANDLE_SIZE, self.w, self.h,
-            fill=BORDER_COLOR, outline=BORDER_COLOR, tags="handle",
+            self.w - HANDLE_SIZE, self.h - HANDLE_SIZE, self.w, self.h, fill=self.color, outline=self.color,
         )
+        if self.label:
+            # Solid tag in the top-left corner so the name is readable over any background
+            # (and gives a grab point besides the thin border).
+            text = self.canvas.create_text(6, 4, text=self.label, anchor="nw", fill="black",
+                                           font=("Segoe UI", 9, "bold"))
+            x0, y0, x1, y1 = self.canvas.bbox(text)
+            tag = self.canvas.create_rectangle(0, 0, x1 + 4, y1 + 2, fill=self.color, outline=self.color)
+            self.canvas.tag_lower(tag, text)
 
     def _on_press(self, event):
         if self.w - event.x <= HANDLE_SIZE and self.h - event.y <= HANDLE_SIZE:
@@ -96,8 +107,7 @@ class RoiOverlay:
             self._apply_geometry()
             self._redraw()
 
-        if self.on_change:
-            self.on_change(self.x, self.y, self.w, self.h)
-
     def _on_release(self, _event):
+        if self._drag_mode is not None and self.on_release:
+            self.on_release(self.x, self.y, self.w, self.h)
         self._drag_mode = None

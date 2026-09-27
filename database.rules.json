@@ -9,6 +9,9 @@
       ".read": "auth != null && auth.token.email == 'bgdongtan@gmail.com' && auth.token.email_verified == true",
       "command": {
         ".write": "auth != null && auth.token.email == 'bgdongtan@gmail.com' && auth.token.email_verified == true"
+      },
+      "viewer": {
+        ".write": "auth != null && auth.token.email == 'bgdongtan@gmail.com' && auth.token.email_verified == true"
       }
     },
     "preview": {

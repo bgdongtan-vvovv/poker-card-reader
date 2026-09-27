@@ -4,3 +4,4 @@ debug_capture.png
 .firebase/
 *.log
 service-account*.json
+rois.json
