@@ -6,36 +6,65 @@ corner, and overlap hole cards so only that corner of the back card is visible. 
   2. inside each, find rank glyphs along the top edge (one per card, even when overlapped)
      and the suit glyph directly beneath each,
   3. read the rank with OCR (works across clients' different fonts) and decide the suit
-     by colour (red/black) plus two independent shape checks that must agree.
+     by image matching against the four suit templates in suit_templates/.
 Everything is measured relative to each glyph's own box, so window size doesn't matter.
 """
-import glob
 import os
 
 import cv2
 import numpy as np
 from rapidocr import RapidOCR
 
-GLYPH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "glyphs")
+SUIT_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "suit_templates")
+SUIT_FILES = {"S": "spade", "H": "heart", "D": "diamond", "C": "club"}
 SUIT_SIZE = (32, 32)
 SUIT_SYMBOLS = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
+RED_SUITS = {"H", "D"}
 RANKS = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"}
 MIN_OCR_SCORE = 0.5
-
-# Convex-hull solidity of the suit glyph. Measured on two clients (Prime Poker, AA Global):
-# hearts 0.93-0.97 vs diamonds 0.88-0.91; spades 0.91-0.94 vs clubs 0.77-0.81.
-HEART_MIN_SOLIDITY = 0.915
-SPADE_MIN_SOLIDITY = 0.86
+MIN_SUIT_SCORE = 0.7
+MIN_SUIT_MARGIN = 0.05
 
 
 def _load_suit_templates():
-    templates = []
-    for path in glob.glob(os.path.join(GLYPH_DIR, "suit_*.png")):
-        label = os.path.basename(path).split("_")[1]
-        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-        if img is not None:
-            templates.append((label, _normalize(img.astype(np.float32).ravel())))
-    return templates
+    """Load suit_templates/{spade,heart,diamond,club}*.png — several per suit are allowed
+    (e.g. club.png + club_prime.png) so one folder can cover different poker clients. Any
+    size and padding works: each image is cropped to its symbol, like glyphs on screen."""
+    templates, missing = [], []
+    files = sorted(os.listdir(SUIT_TEMPLATE_DIR)) if os.path.isdir(SUIT_TEMPLATE_DIR) else []
+    for code, name in SUIT_FILES.items():
+        found = False
+        for filename in files:
+            stem, ext = os.path.splitext(filename.lower())
+            if not stem.startswith(name) or ext not in (".png", ".jpg", ".jpeg", ".bmp"):
+                continue
+            img = _read_on_white(os.path.join(SUIT_TEMPLATE_DIR, filename))
+            if img is None:
+                continue
+            # The symbol is the largest connected ink shape; stray marks (a bit of the rank
+            # above it, the card border) in a loosely cropped template are ignored.
+            n, _, stats, _ = cv2.connectedComponentsWithStats((img[:, :, 1] < 128).astype(np.uint8))
+            if n < 2:
+                continue
+            i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+            templates.append((code, _suit_vector(img, tuple(int(v) for v in stats[i, :4]))))
+            found = True
+        if not found:
+            missing.append(name)
+    return templates, missing
+
+
+def _read_on_white(path):
+    """Read an image as BGR, flattening any transparency onto white."""
+    img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_UNCHANGED)
+    if img is None:
+        return None
+    if img.ndim == 2:
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    if img.shape[2] == 4:
+        alpha = img[:, :, 3:4].astype(np.float32) / 255
+        return (img[:, :, :3] * alpha + 255 * (1 - alpha)).astype(np.uint8)
+    return img
 
 
 def _normalize(vec):
@@ -134,15 +163,6 @@ def _is_red_ink(img, bbox):
     return float((patch[ink][:, 2] - patch[ink][:, 1]).mean()) > 60
 
 
-def _solidity(img, bbox):
-    ink = _dark_ink(img, bbox).astype(np.uint8)
-    contours, _ = cv2.findContours(ink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not contours:
-        return 0.0
-    c = max(contours, key=cv2.contourArea)
-    return cv2.contourArea(c) / (cv2.contourArea(cv2.convexHull(c)) + 1e-6)
-
-
 def _suit_vector(img, bbox):
     mask = _dark_ink(img, bbox).astype(np.uint8) * 255
     return _normalize(cv2.resize(mask, SUIT_SIZE, interpolation=cv2.INTER_AREA).astype(np.float32).ravel())
@@ -150,7 +170,7 @@ def _suit_vector(img, bbox):
 
 class CardReader:
     def __init__(self):
-        self.suit_templates = _load_suit_templates()
+        self.suit_templates, self.missing_suit_templates = _load_suit_templates()
         self._ocr = RapidOCR()
 
     def read(self, img):
@@ -208,23 +228,23 @@ class CardReader:
         return _normalize_rank(result.txts[0]), float(result.scores[0])
 
     def _read_suit(self, img, box, rank_is_red):
-        """Suit only when colour, template and shape all agree; otherwise None (skip the card).
-        A suit covered by a banner fails the colour or agreement check instead of being misread."""
-        is_red = _is_red_ink(img, box)
-        if is_red != rank_is_red:
-            return None
-        pair = ("H", "D") if is_red else ("S", "C")
-        best, best_score = None, -1.0
+        """Best-matching suit template, or None (skip the card) when the match is weak or the
+        matched suit's colour disagrees with the rank's — e.g. a suit covered by a banner."""
         vec = _suit_vector(img, box)
+        by_suit = {}
         for label, tmpl in self.suit_templates:
-            if label in pair:
-                score = float(vec @ tmpl)
-                if score > best_score:
-                    best, best_score = label, score
-        solidity = _solidity(img, box)
-        by_shape = ("H" if solidity >= HEART_MIN_SOLIDITY else "D") if is_red else \
-                   ("S" if solidity >= SPADE_MIN_SOLIDITY else "C")
-        return best if best == by_shape else None
+            by_suit[label] = max(by_suit.get(label, -1.0), float(vec @ tmpl))
+        if not by_suit:
+            return None
+        ranked = sorted(by_suit.items(), key=lambda kv: -kv[1])
+        best, best_score = ranked[0]
+        runner_up = ranked[1][1] if len(ranked) > 1 else -1.0
+        # Too close to call (spade vs club are similar blobs) → skip rather than guess.
+        if best_score < MIN_SUIT_SCORE or best_score - runner_up < MIN_SUIT_MARGIN:
+            return None
+        if (best in RED_SUITS) != rank_is_red or _is_red_ink(img, box) != rank_is_red:
+            return None
+        return best
 
 
 def _largest_aligned_row(faces):

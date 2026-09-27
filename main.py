@@ -51,6 +51,10 @@ class App:
         self.publisher = None
 
         self._build_ui()
+        if self.reader.missing_suit_templates:
+            self._log("문양 템플릿 없음: suit_templates/ 폴더에 "
+                      + ", ".join(f"{n}.png" for n in self.reader.missing_suit_templates)
+                      + " 를 넣고 다시 실행하세요. 그 문양은 인식되지 않습니다.")
         self._init_publisher()
         self.refresh_windows()
         self._poll_log_queue()
